@@ -7,7 +7,7 @@ import { useCanvasRenderer } from './useCanvasRenderer';
 export const Canvas: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const store = useStore();
   
-  const { camera, startPan, pan, endPan, zoom, resetCamera, isPanning } = useCamera();
+  const { camera, startPan, pan, panBy, endPan, zoom, resetCamera, isPanning } = useCamera();
   const { canvasRef, handleMouseDown: onDrawDown, handleMouseMove: onDrawMove, handleMouseUp: onDrawUp, handleContextMenu } = useDrawing(camera);
   
   useCanvasRenderer(canvasRef, camera, isActive);
@@ -49,7 +49,13 @@ export const Canvas: React.FC<{ isActive?: boolean }> = ({ isActive = true }) =>
       const screenX = e.clientX - rect.left;
       const screenY = e.clientY - rect.top;
       
-      zoom(screenX, screenY, e.deltaY);
+      if (e.shiftKey) {
+        // Hold Shift to pan with wheel
+        panBy(-e.deltaX, -e.deltaY);
+      } else {
+        // Zoom by default (with or without Ctrl)
+        zoom(screenX, screenY, e.deltaY);
+      }
     };
 
     canvas.addEventListener('wheel', handleWheelEvent, { passive: false });

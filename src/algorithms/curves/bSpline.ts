@@ -6,11 +6,17 @@ export const bSplineCurve = (controlPoints: Point[], degree: number = 3, numSegm
   
   if (n < degree + 1) return points;
 
-  // Knot vector
+  // Clamped knot vector
   const knots: number[] = [];
   const m = n + degree + 1;
   for (let i = 0; i < m; i++) {
-    knots.push(i);
+    if (i <= degree) {
+      knots.push(0);
+    } else if (i >= n) {
+      knots.push(n - degree);
+    } else {
+      knots.push(i - degree);
+    }
   }
 
   const N = (i: number, k: number, u: number): number => {

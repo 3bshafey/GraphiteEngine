@@ -21,9 +21,9 @@ export const useCamera = () => {
     if (!isPanningRef.current) return;
     
     setCamera(prev => {
-      // Fix zoom-aware movement (adjust pan speed based on scale)
-      const dx = (screenX - lastMousePos.current.x) / prev.scale;
-      const dy = (screenY - lastMousePos.current.y) / prev.scale;
+      // 1:1 panning with mouse movement
+      const dx = (screenX - lastMousePos.current.x);
+      const dy = (screenY - lastMousePos.current.y);
       
       return {
         ...prev,
@@ -33,6 +33,14 @@ export const useCamera = () => {
     });
     
     lastMousePos.current = { x: screenX, y: screenY };
+  }, []);
+
+  const panBy = useCallback((dx: number, dy: number) => {
+    setCamera(prev => ({
+      ...prev,
+      x: prev.x + dx,
+      y: prev.y + dy
+    }));
   }, []);
 
   const endPan = useCallback(() => {
@@ -75,6 +83,7 @@ export const useCamera = () => {
     camera,
     startPan,
     pan,
+    panBy,
     endPan,
     zoom,
     resetCamera,

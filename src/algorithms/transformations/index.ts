@@ -23,8 +23,8 @@ export const rotate = (points: Point[], angleInDegrees: number, center: Point): 
     const dx = p.x - center.x;
     const dy = p.y - center.y;
     return {
-      x: Math.round(center.x + dx * cosA - dy * sinA),
-      y: Math.round(center.y + dx * sinA + dy * cosA)
+      x: Math.round(center.x + dx * cosA + dy * sinA),
+      y: Math.round(center.y - dx * sinA + dy * cosA)
     };
   });
 };
