@@ -1,92 +1,61 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Camera } from './Camera';
 
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 10;
-const ZOOM_SENSITIVITY = 0.001;
+const DEFAULT_CAMERA: Camera = { x: 0, y: 0, scale: 1 };
 
 export const useCamera = () => {
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, scale: 1 });
-  const [isPanning, setIsPanning] = useState(false);
+  const [camera, setCamera] = useState<Camera>({ ...DEFAULT_CAMERA });
   const isPanningRef = useRef(false);
-  const lastMousePos = useRef({ x: 0, y: 0 });
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
 
-  const startPan = useCallback((screenX: number, screenY: number) => {
+  /** Begin a pan gesture at screen position (x, y) */
+  const startPan = useCallback((x: number, y: number) => {
     isPanningRef.current = true;
+    lastPosRef.current = { x, y };
     setIsPanning(true);
-    lastMousePos.current = { x: screenX, y: screenY };
   }, []);
 
-  const pan = useCallback((screenX: number, screenY: number) => {
-    if (!isPanningRef.current) return;
-    
-    setCamera(prev => {
-      // 1:1 panning with mouse movement
-      const dx = (screenX - lastMousePos.current.x);
-      const dy = (screenY - lastMousePos.current.y);
-      
-      return {
-        ...prev,
-        x: prev.x + dx,
-        y: prev.y + dy
-      };
-    });
-    
-    lastMousePos.current = { x: screenX, y: screenY };
+  /** Continue pan to new screen position */
+  const pan = useCallback((x: number, y: number) => {
+    if (!isPanningRef.current || !lastPosRef.current) return;
+    const dx = x - lastPosRef.current.x;
+    const dy = y - lastPosRef.current.y;
+    lastPosRef.current = { x, y };
+    setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
   }, []);
 
+  /** Pan by an explicit delta (useful for keyboard arrow keys) */
   const panBy = useCallback((dx: number, dy: number) => {
-    setCamera(prev => ({
-      ...prev,
-      x: prev.x + dx,
-      y: prev.y + dy
-    }));
+    setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
   }, []);
 
+  /** End the current pan gesture */
   const endPan = useCallback(() => {
     isPanningRef.current = false;
+    lastPosRef.current = null;
     setIsPanning(false);
   }, []);
 
-  const zoom = useCallback((screenX: number, screenY: number, deltaY: number) => {
+  /** Zoom around a screen pivot point */
+  const zoom = useCallback((delta: number, pivotX: number, pivotY: number) => {
     setCamera(prev => {
-      // Exponential zoom
-      const zoomFactor = Math.exp(-deltaY * ZOOM_SENSITIVITY);
-      let newScale = prev.scale * zoomFactor;
-      
-      // Clamp zoom
-      newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
-      
-      // We want to zoom towards the mouse cursor.
-      // This means the world coordinates under the mouse cursor should remain the same before and after zoom.
-      // screenX = worldX * oldScale + oldX
-      // worldX = (screenX - oldX) / oldScale
-      // We want: screenX = worldX * newScale + newX
-      // newX = screenX - worldX * newScale = screenX - ((screenX - oldX) / oldScale) * newScale
-      
-      const newX = screenX - ((screenX - prev.x) / prev.scale) * newScale;
-      const newY = screenY - ((screenY - prev.y) / prev.scale) * newScale;
-
+      const factor = delta > 0 ? 1.1 : 0.9;
+      const newScale = Math.max(0.1, Math.min(20, prev.scale * factor));
+      // Keep the pivot point fixed in world space
+      const wx = (pivotX - prev.x) / prev.scale;
+      const wy = (pivotY - prev.y) / prev.scale;
       return {
-        x: newX,
-        y: newY,
-        scale: newScale
+        x: pivotX - wx * newScale,
+        y: pivotY - wy * newScale,
+        scale: newScale,
       };
     });
   }, []);
 
   const resetCamera = useCallback(() => {
-    setCamera({ x: 0, y: 0, scale: 1 });
+    setCamera({ ...DEFAULT_CAMERA });
   }, []);
 
-  return {
-    camera,
-    startPan,
-    pan,
-    panBy,
-    endPan,
-    zoom,
-    resetCamera,
-    isPanning
-  };
+  return { camera, startPan, pan, panBy, endPan, zoom, resetCamera, isPanning };
 };

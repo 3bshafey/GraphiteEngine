@@ -1,118 +1,74 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useCamera } from './useCamera';
 import { useAlgorithmCanvasRenderer } from './useAlgorithmCanvasRenderer';
+import { useStore } from '../../store/useStore';
+
+const CELL_MIN = 4;
+const CELL_MAX = 80;
+const CELL_STEP = 2;
 
 export const AlgorithmCanvas: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
-  const { camera, startPan, pan, endPan, zoom, resetCamera, isPanning } = useCamera();
-  
+  const { camera, startPan, pan, endPan, isPanning } = useCamera();
+  const { cellSize, setCellSize } = useStore();
+
   useAlgorithmCanvasRenderer(canvasRef, camera, isActive);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'r' || e.key === 'R') {
-        resetCamera();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [resetCamera]);
-
-  // Disable browser context menu globally
-  useEffect(() => {
-    const preventContextMenu = (e: MouseEvent) => e.preventDefault();
-    window.addEventListener('contextmenu', preventContextMenu);
-    return () => window.removeEventListener('contextmenu', preventContextMenu);
-  }, []);
-
-  // Passive wheel listener for zooming
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handleWheelEvent = (e: WheelEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const rect = canvas.getBoundingClientRect();
-      if (!rect) return;
-      const screenX = e.clientX - rect.left;
-      const screenY = e.clientY - rect.top;
-      
-      zoom(screenX, screenY, e.deltaY);
-    };
-
-    canvas.addEventListener('wheel', handleWheelEvent, { passive: false });
-    return () => canvas.removeEventListener('wheel', handleWheelEvent);
-  }, [canvasRef, zoom]);
-
-  const getScaledCoords = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: e.clientX, y: e.clientY };
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    return {
-      x: e.clientX * scaleX,
-      y: e.clientY * scaleY
-    };
-  }, [canvasRef]);
-
-  // Combined mouse handlers
+  // ── Mouse Events: all drags pan ────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // In Algorithm Canvas, any left/middle click pans
-    const isLeftClick = e.button === 0;
-    const isMiddleClick = e.button === 1;
-
-    if (isLeftClick || isMiddleClick) {
+    if (e.button === 0 || e.button === 1) {
       e.preventDefault();
-      const coords = getScaledCoords(e);
-      startPan(coords.x, coords.y);
+      startPan(e.clientX, e.clientY);
     }
-  }, [startPan, getScaledCoords]);
+  }, [startPan]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isPanning) {
-      const coords = getScaledCoords(e);
-      pan(coords.x, coords.y);
-    }
-  }, [isPanning, pan, getScaledCoords]);
+    if (isPanning) pan(e.clientX, e.clientY);
+  }, [isPanning, pan]);
 
   const handleMouseUp = useCallback(() => {
-    if (isPanning) {
-      endPan();
-    }
+    if (isPanning) endPan();
   }, [isPanning, endPan]);
 
   const handleMouseLeave = useCallback(() => {
-    if (isPanning) {
-      endPan();
-    }
+    if (isPanning) endPan();
   }, [isPanning, endPan]);
 
-  // Handle window resize
+  // ── Wheel: zoom via cellSize (same as algorithm panel input) ───────
   useEffect(() => {
-    const resizeCanvas = () => {
-      if (canvasRef.current && canvasRef.current.parentElement) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      // scrolling up (deltaY < 0) → bigger cells = zoom in
+      // scrolling down (deltaY > 0) → smaller cells = zoom out
+      setCellSize(
+        Math.max(CELL_MIN, Math.min(CELL_MAX, cellSize + (e.deltaY < 0 ? CELL_STEP : -CELL_STEP)))
+      );
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [cellSize, setCellSize]);
+
+  // ── Prevent browser context menu ───────────────────────────────────
+  useEffect(() => {
+    const prevent = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener('contextmenu', prevent);
+    return () => window.removeEventListener('contextmenu', prevent);
+  }, []);
+
+  // ── Resize ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const resize = () => {
+      if (canvasRef.current?.parentElement) {
         canvasRef.current.width = canvasRef.current.parentElement.clientWidth;
         canvasRef.current.height = canvasRef.current.parentElement.clientHeight;
       }
     };
-    
-    if (isActive) {
-      setTimeout(resizeCanvas, 0);
-    }
-
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
+    if (isActive) setTimeout(resize, 0);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
   }, [isActive]);
-
-  const getCursor = () => {
-    if (isPanning) return 'cursor-grabbing';
-    return 'cursor-grab';
-  };
 
   return (
     <div className="absolute inset-0 w-full h-full z-10 pointer-events-auto">
@@ -123,8 +79,7 @@ export const AlgorithmCanvas: React.FC<{ isActive?: boolean }> = ({ isActive = t
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
-        onDoubleClick={resetCamera}
-        className={`w-full h-full bg-transparent ${getCursor()}`}
+        className={`w-full h-full bg-transparent ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
       />
     </div>
   );

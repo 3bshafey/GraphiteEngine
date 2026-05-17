@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { useDrawing } from '../../hooks/useDrawing';
 import { useCamera } from './useCamera';
@@ -6,134 +6,108 @@ import { useCanvasRenderer } from './useCanvasRenderer';
 
 export const Canvas: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const store = useStore();
-  
-  const { camera, startPan, pan, panBy, endPan, zoom, resetCamera, isPanning } = useCamera();
-  const { canvasRef, handleMouseDown: onDrawDown, handleMouseMove: onDrawMove, handleMouseUp: onDrawUp, handleContextMenu } = useDrawing(camera);
-  
+  const { camera, startPan, pan, endPan, isPanning } = useCamera();
+  const { cellSize, setCellSize } = useStore();
+
+  const CELL_MIN = 4, CELL_MAX = 80, CELL_STEP = 2;
+  const { canvasRef, handleMouseDown: drawMouseDown, handleMouseMove: drawMouseMove, handleMouseUp: drawMouseUp, handleContextMenu } = useDrawing(camera);
+  const isSpaceDown = useRef(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+
   useCanvasRenderer(canvasRef, camera, isActive);
 
-  // Keyboard shortcuts
+  // ── Keyboard: Space bar for pan mode ──────────────────────────────
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'r' || e.key === 'R') {
-        resetCamera();
-      } else if (e.key === 'z' || e.key === 'Z') {
-        store.undo();
-      } else if (e.key === 'Escape') {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !isSpaceDown.current) {
+        isSpaceDown.current = true;
+        setSpaceHeld(true);
+        e.preventDefault();
+      }
+      if (e.key === 'z' || e.key === 'Z') store.undo();
+      if (e.key === 'Escape') {
         store.setIsDrawing(false);
         store.setTempPoints([]);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [resetCamera, store]);
-
-  // Disable browser context menu globally
-  useEffect(() => {
-    const preventContextMenu = (e: MouseEvent) => e.preventDefault();
-    window.addEventListener('contextmenu', preventContextMenu);
-    return () => window.removeEventListener('contextmenu', preventContextMenu);
-  }, []);
-
-  // Passive wheel listener for zooming
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handleWheelEvent = (e: WheelEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const rect = canvas.getBoundingClientRect();
-      if (!rect) return;
-      const screenX = e.clientX - rect.left;
-      const screenY = e.clientY - rect.top;
-      
-      if (e.shiftKey) {
-        // Hold Shift to pan with wheel
-        panBy(-e.deltaX, -e.deltaY);
-      } else {
-        // Zoom by default (with or without Ctrl)
-        zoom(screenX, screenY, e.deltaY);
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        isSpaceDown.current = false;
+        setSpaceHeld(false);
+        endPan();
       }
     };
-
-    canvas.addEventListener('wheel', handleWheelEvent, { passive: false });
-    return () => canvas.removeEventListener('wheel', handleWheelEvent);
-  }, [canvasRef, zoom]);
-
-  const getScaledCoords = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: e.clientX, y: e.clientY };
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    return {
-      x: e.clientX * scaleX,
-      y: e.clientY * scaleY
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
     };
-  }, [canvasRef]);
+  }, [store, endPan]);
 
-  // Combined mouse handlers
+  // ── Mouse Events ───────────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const isLeftClickOnSelectTool = e.button === 0 && store.currentMode === 'SELECT';
-    const isMiddleClick = e.button === 1;
-
-    if (isLeftClickOnSelectTool || isMiddleClick) {
+    // Middle mouse or Space+left → start pan
+    if (e.button === 1 || (e.button === 0 && isSpaceDown.current)) {
       e.preventDefault();
-      const coords = getScaledCoords(e);
-      startPan(coords.x, coords.y);
+      startPan(e.clientX, e.clientY);
       return;
     }
-    
-    onDrawDown(e);
-  }, [startPan, onDrawDown, store.currentMode, getScaledCoords]);
+    // Left click → drawing
+    drawMouseDown(e);
+  }, [startPan, drawMouseDown]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isPanning) {
-      const coords = getScaledCoords(e);
-      pan(coords.x, coords.y);
+      pan(e.clientX, e.clientY);
       return;
     }
-    onDrawMove(e);
-  }, [isPanning, pan, onDrawMove, getScaledCoords]);
+    drawMouseMove(e);
+  }, [isPanning, pan, drawMouseMove]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isPanning) {
       endPan();
       return;
     }
-    onDrawUp(e);
-  }, [isPanning, endPan, onDrawUp]);
+    drawMouseUp(e);
+  }, [isPanning, endPan, drawMouseUp]);
 
-  const handleMouseLeave = useCallback(() => {
-    if (isPanning) {
-      endPan();
-    }
-  }, [isPanning, endPan]);
-
-  // Handle window resize
+  // ── Wheel: zoom via cellSize (same as algorithm panel input) ───────
   useEffect(() => {
-    const resizeCanvas = () => {
-      if (canvasRef.current && canvasRef.current.parentElement) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      setCellSize(
+        Math.max(CELL_MIN, Math.min(CELL_MAX, cellSize + (e.deltaY < 0 ? CELL_STEP : -CELL_STEP)))
+      );
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [canvasRef, cellSize, setCellSize]);
+
+  // ── Prevent browser context menu ───────────────────────────────────
+  useEffect(() => {
+    const prevent = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener('contextmenu', prevent);
+    return () => window.removeEventListener('contextmenu', prevent);
+  }, []);
+
+  // ── Resize ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const resize = () => {
+      if (canvasRef.current?.parentElement) {
         canvasRef.current.width = canvasRef.current.parentElement.clientWidth;
         canvasRef.current.height = canvasRef.current.parentElement.clientHeight;
       }
     };
-    
-    if (isActive) {
-      setTimeout(resizeCanvas, 0);
-    }
+    if (isActive) setTimeout(resize, 0);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, [isActive, canvasRef]);
 
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, [isActive]);
-
-  const getCursor = () => {
-    if (isPanning) return 'cursor-grabbing';
-    if (store.currentMode === 'SELECT') return 'cursor-grab';
-    return 'cursor-crosshair';
-  };
+  const cursor = spaceHeld || isPanning ? 'cursor-grab' : 'cursor-crosshair';
 
   return (
     <div className="absolute inset-0 w-full h-full z-10 pointer-events-auto">
@@ -142,10 +116,8 @@ export const Canvas: React.FC<{ isActive?: boolean }> = ({ isActive = true }) =>
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
         onContextMenu={handleContextMenu}
-        onDoubleClick={resetCamera}
-        className={`w-full h-full bg-transparent ${getCursor()}`}
+        className={`w-full h-full bg-transparent ${cursor}`}
       />
     </div>
   );
